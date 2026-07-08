@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useStore } from "@/context/StoreContext";
 import { ShoppingBag, Minus, Plus, Trash2, Tag, Ticket, ArrowRight, Loader2, CheckCircle2, CreditCard } from "lucide-react";
@@ -14,7 +14,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { initiateRazorpayOrderAction, verifyPaymentAction, markOrderAsFailedAction, createOrderAction, applyCouponAction } from "@/app/actions";
+import { initiateCheckoutAction, verifyPaymentAction, markOrderAsFailedAction, createOrderAction, applyCouponAction, verifyPhonePeOrderStatusAction } from "@/app/actions";
+import SafeImage from "@/components/ui/SafeImage";
+import CartProductImage from "@/components/ui/CartProductImage";
 
 function loadRazorpayScript(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -48,10 +50,54 @@ export default function CartPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
 
+  // PhonePe status verification states
+  const [isVerifyingPhonePe, setIsVerifyingPhonePe] = useState(false);
+  const [phonepeError, setPhonepeError] = useState<string | null>(null);
+  const [phonepePendingMessage, setPhonepePendingMessage] = useState<string | null>(null);
+
   // Razorpay Simulated Fallback States
   const [simulatedModalOpen, setSimulatedModalOpen] = useState(false);
   const [simulatedOrder, setSimulatedOrder] = useState<any>(null);
   const [pendingOrderDetails, setPendingOrderDetails] = useState<any>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const isReturn = params.get("phonepe_return") === "true";
+      const orderId = params.get("orderId");
+
+      if (isReturn) {
+        if (orderId) {
+          setIsVerifyingPhonePe(true);
+          verifyPhonePeOrderStatusAction(orderId)
+            .then((res) => {
+              setIsVerifyingPhonePe(false);
+              if (res.success && res.state === "COMPLETED") {
+                setCheckoutSuccess(true);
+                clearCart();
+              } else if (res.success && res.state === "PENDING") {
+                setPhonepePendingMessage("Your PhonePe payment is currently pending confirmation from the bank. Once confirmed, you will receive your receipt via email.");
+                setCheckoutSuccess(true);
+                clearCart();
+              } else {
+                setPhonepeError(res.message || "Your payment was not completed or was cancelled.");
+              }
+            })
+            .catch(() => {
+              setIsVerifyingPhonePe(false);
+              setPhonepeError("Unable to verify payment status. Please contact support if your account was debited.");
+            })
+            .finally(() => {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            });
+        } else {
+          setCheckoutSuccess(true);
+          clearCart();
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    }
+  }, []);
 
   // Sync user details when modal opens
   const openCheckoutModal = () => {
@@ -174,37 +220,9 @@ export default function CartPage() {
 
     setIsSubmitting(true);
     try {
-      const initRes = await initiateRazorpayOrderAction(grandTotal);
-      if (!initRes.success || !initRes.order) {
+      const initRes = await initiateCheckoutAction(grandTotal, window.location.origin, mobile, email);
+      if (!initRes.success) {
         alert(initRes.error || "Failed to initiate payment.");
-        setIsSubmitting(false);
-        return;
-      }
-
-      const order = initRes.order;
-
-      if (order.simulated) {
-        setSimulatedOrder(order);
-        const detailedAddress = JSON.stringify({
-          house,
-          postOffice,
-          city,
-          district,
-          state: "Kerala",
-          pin,
-          mobile
-        });
-
-        setPendingOrderDetails({ name, email, address: detailedAddress });
-        setCheckoutOpen(false);
-        setSimulatedModalOpen(true);
-        setIsSubmitting(false);
-        return;
-      }
-
-      const scriptLoaded = await loadRazorpayScript();
-      if (!scriptLoaded) {
-        alert("Razorpay checkout failed to load. Please check your network.");
         setIsSubmitting(false);
         return;
       }
@@ -219,6 +237,28 @@ export default function CartPage() {
         variantWeight: item.variantWeight || null,
         variantFlavour: item.variantFlavour || null,
       }));
+
+      // For Razorpay sim mode
+      const order = initRes.order;
+      if (initRes.gateway === "razorpay" && order?.simulated) {
+        setSimulatedOrder(order);
+        const detailedAddress = JSON.stringify({ house, postOffice, city, district, state: "Kerala", pin, mobile });
+        setPendingOrderDetails({ name, email, address: detailedAddress });
+        setCheckoutOpen(false);
+        setSimulatedModalOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (initRes.gateway === "razorpay") {
+        const scriptLoaded = await loadRazorpayScript();
+        if (!scriptLoaded) {
+          alert("Razorpay checkout failed to load. Please check your network.");
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const dbOrderRes = await createOrderAction({
         email,
         name,
@@ -229,7 +269,7 @@ export default function CartPage() {
         shippingFee: shipping,
         total: grandTotal,
         paymentStatus: "PENDING",
-        razorpayOrderId: order.id,
+        razorpayOrderId: initRes.orderId || order?.id,
         items: orderItems,
       });
 
@@ -239,7 +279,18 @@ export default function CartPage() {
         return;
       }
 
+      if (initRes.gateway === "phonepe" && initRes.redirectUrl) {
+        window.location.href = initRes.redirectUrl;
+        return;
+      }
+
       const orderDbId = dbOrderRes.order.id;
+
+      if (!order) {
+        alert("Payment initialization error: Order is missing.");
+        setIsSubmitting(false);
+        return;
+      }
 
       const options = {
         key: initRes.keyId,
@@ -305,13 +356,17 @@ export default function CartPage() {
         </div>
         <h2 className="text-2xl font-bold text-gray-900">Order Placed Successfully!</h2>
         <p className="text-sm text-gray-500 mt-2 max-w-xs leading-relaxed">
-          Thank you for shopping at Stack Shack Nutrition. We are preparing your sports supplements package.
+          {phonepePendingMessage || "Thank you for shopping at Stack Shack Nutrition. We are preparing your sports supplements package."}
         </p>
+        {phonepePendingMessage && (
+          <div className="mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3 rounded-xl">
+            Payment Status: <strong>Pending Confirmation</strong>
+          </div>
+        )}
         <div className="mt-4 bg-gray-50 rounded-xl p-4 w-full border border-gray-100 text-left text-xs space-y-1">
-          <p className="font-semibold text-gray-700">Order details simulated:</p>
-          <p className="text-gray-500"><span className="font-medium">Customer:</span> {name}</p>
-          <p className="text-gray-500"><span className="font-medium">Ship to:</span> {city}, Kerala</p>
-          <p className="text-gray-500"><span className="font-medium">Total Charged:</span> ${grandTotal.toFixed(2)}</p>
+          <p className="font-semibold text-gray-700">Order summary:</p>
+          <p className="text-gray-500"><span className="font-medium">Customer:</span> {name || "Guest"}</p>
+          <p className="text-gray-500"><span className="font-medium">Total Charged:</span> ₹{grandTotal.toFixed(2)}</p>
         </div>
         <Link href="/shop" className="mt-6 w-full">
           <Button
@@ -327,7 +382,39 @@ export default function CartPage() {
 
   return (
     <div className="w-full bg-[#FFFFFF] min-h-screen py-8 mb-16">
+      {isVerifyingPhonePe && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
+          <Loader2 className="h-12 w-12 animate-spin text-[#4285F4]" />
+          <h3 className="mt-4 text-lg font-black text-gray-900">Verifying PhonePe Payment</h3>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Please wait while we securely confirm your payment status with PhonePe...</p>
+        </div>
+      )}
+
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+
+        {phonepeError && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h4 className="text-sm font-black text-red-900">Payment Incomplete or Cancelled</h4>
+              <p className="text-xs font-medium text-red-700 mt-1">{phonepeError}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => { setPhonepeError(null); setCheckoutOpen(true); }}
+                className="rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2"
+              >
+                Retry Payment
+              </Button>
+              <Button
+                onClick={() => setPhonepeError(null)}
+                variant="outline"
+                className="rounded-xl border-red-200 text-red-700 hover:bg-red-100 text-xs px-3 py-2"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Header */}
         <div className="border-b border-gray-100 pb-5">
@@ -389,13 +476,10 @@ export default function CartPage() {
                   >
                     <div className="flex items-center gap-4 min-w-0">
                       {/* Product Visual */}
-                      <div className="h-16 w-16 rounded-xl overflow-hidden bg-gray-50 shrink-0">
-                        <img
-                          src={item.productImage || p.images?.[0] || "/placeholder.png"}
-                          alt={p.name}
-                          className="h-full w-full object-cover"
-                        />
-                      </div>
+                      <CartProductImage 
+                        src={item.productImage || p.images?.[0]} 
+                        alt={p.name} 
+                      />
 
                       {/* Details */}
                       <div className="min-w-0">

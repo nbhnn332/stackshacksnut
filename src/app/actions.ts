@@ -9,6 +9,7 @@ import * as bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { createPaymentOrder, verifyPaymentSignature } from "@/lib/razorpay";
 import { SignJWT, jwtVerify } from "jose";
+import { createPhonePeOrder, checkPhonePeOrderStatus } from "@/lib/phonepe";
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "stackshack_nutrition_secret_2026_secure"
@@ -701,14 +702,60 @@ export async function adminDeleteCouponAction(id: string) {
 // --- SETTINGS MANAGEMENT ---
 
 export async function adminGetSettingsAction() {
-  return await db.getSettings();
+  await ensureAdmin();
+  const settings = await db.getSettings();
+  
+  if (typeof settings.phonepeClientSecret === "string") {
+    console.log(`[PhonePe Secret Debug] Read phonepe_client_secret from DB with length: ${settings.phonepeClientSecret.length}`);
+  }
+
+  // Mask secrets
+  const mask = (val: string | null | undefined) => (val && val.length > 0) ? "••••••••" : "";
+  
+  return {
+    ...settings,
+    razorpayKeySecret: mask(settings.razorpayKeySecret),
+    phonepeClientSecret: mask(settings.phonepeClientSecret),
+    resendApiKey: mask(settings.resendApiKey),
+    cloudinaryApiSecret: mask(settings.cloudinaryApiSecret),
+  };
 }
 
 export async function adminUpdateSettingsAction(data: any) {
   await ensureAdmin();
-  const settings = await db.updateSettings(data);
+  const updateData = { ...data };
+
+  // Helper to detect placeholder or masked secrets (e.g. "", "••••••••", "********", "**")
+  const isMaskedOrEmptySecret = (val: any) => {
+    if (val === undefined || val === null) return true;
+    if (typeof val !== "string") return false;
+    const trimmed = val.trim();
+    if (trimmed === "") return true;
+    if (/^[*•]+$/.test(trimmed)) return true;
+    if (trimmed.includes("••••") || trimmed.includes("****")) return true;
+    return false;
+  };
+
+  // Do not overwrite secrets if they are empty or a placeholder mask
+  if (isMaskedOrEmptySecret(updateData.razorpayKeySecret)) {
+    delete updateData.razorpayKeySecret;
+  }
+  if (isMaskedOrEmptySecret(updateData.phonepeClientSecret)) {
+    delete updateData.phonepeClientSecret;
+  } else if (typeof updateData.phonepeClientSecret === "string") {
+    console.log(`[PhonePe Secret Debug] Backend updating phonepe_client_secret with length: ${updateData.phonepeClientSecret.length}`);
+  }
+  if (isMaskedOrEmptySecret(updateData.resendApiKey)) {
+    delete updateData.resendApiKey;
+  }
+  if (isMaskedOrEmptySecret(updateData.cloudinaryApiSecret)) {
+    delete updateData.cloudinaryApiSecret;
+  }
+
+  const settings = await db.updateSettings(updateData);
+  clearCache('settings');
   revalidatePath("/", "layout");
-  return { success: true, settings };
+  return { success: true, settings: null }; // Do not return raw settings to client
 }
 
 export async function adminSendTestEmailAction(email: string) {
@@ -871,21 +918,41 @@ export async function adminGetKPIsAction() {
 
 // --- RAZORPAY & RESEND PAYMENTS / EMAIL ACTIONS ---
 
-export async function initiateRazorpayOrderAction(amount: number) {
+export async function initiateCheckoutAction(
+  amount: number,
+  hostUrl?: string,
+  customerPhone?: string,
+  customerEmail?: string
+) {
   try {
     const settings = await db.getSettings();
-    const keyId = settings.razorpayKeyId || null;
-    const keySecret = settings.razorpayKeySecret || null;
+    const gateway = settings.activePaymentGateway || "razorpay";
+    const orderId = `receipt_order_${Date.now()}`;
 
-    console.log("[Razorpay Init] Retrieved Key ID:", keyId ? "Exists" : "Missing");
-    console.log("[Razorpay Init] Key Secret Exists:", keySecret ? "Yes" : "No");
-    console.log("[Razorpay Init] Mode:", keyId && keySecret ? "Real Razorpay API" : "Simulation Mode");
+    if (gateway === "phonepe") {
+      const baseUrl = hostUrl || (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000");
+      const redirectUrl = `${baseUrl}/cart?phonepe_return=true&orderId=${encodeURIComponent(orderId)}`;
+      const callbackUrl = `${baseUrl}/api/phonepe/callback`;
+      
+      try {
+        const url = await createPhonePeOrder(amount, orderId, settings, redirectUrl, callbackUrl, customerPhone, customerEmail);
+        return { success: true, gateway: "phonepe", redirectUrl: url, orderId };
+      } catch (e: any) {
+        console.error("PhonePe Initiation Error:", e);
+        return { success: false, error: e.message || "Failed to initiate PhonePe payment" };
+      }
+    } else {
+      const keyId = settings.razorpayKeyId || null;
+      const keySecret = settings.razorpayKeySecret || null;
 
-    const order = await createPaymentOrder(amount, `receipt_order_${Date.now()}`, keyId, keySecret);
-    return { success: true, order, keyId };
+      console.log("[Razorpay Init] Mode:", keyId && keySecret ? "Real" : "Sim");
+
+      const order = await createPaymentOrder(amount, orderId, keyId, keySecret);
+      return { success: true, gateway: "razorpay", order, keyId };
+    }
   } catch (error: any) {
-    console.error("initiateRazorpayOrderAction error:", error);
-    return { success: false, error: error.message || "Failed to initiate payment order", order: null, keyId: null };
+    console.error("initiateCheckoutAction error:", error);
+    return { success: false, error: error.message || "Failed to initiate payment" };
   }
 }
 
@@ -948,6 +1015,73 @@ export async function markOrderAsFailedAction(orderId: string) {
     return { success: false, error: error.message || "Failed to mark order as failed" };
   }
 }
+
+export async function verifyPhonePeOrderStatusAction(gatewayOrderId: string) {
+  try {
+    const settings = await db.getSettings();
+    const statusResponse = await checkPhonePeOrderStatus(gatewayOrderId, settings);
+
+    const state = statusResponse?.state || statusResponse?.data?.state || statusResponse?.code;
+    const providerRefId =
+      statusResponse?.data?.paymentInstrument?.pgTransactionId ||
+      statusResponse?.data?.transactionId ||
+      statusResponse?.transactionId ||
+      statusResponse?.data?.providerReferenceId ||
+      "";
+
+    console.log("[PhonePe Status Verification Action] OrderId:", gatewayOrderId, "State:", state, "ProviderRef:", providerRefId);
+
+    if (state === "COMPLETED" || state === "PAYMENT_SUCCESS") {
+      const updatedOrder = await db.updateOrderPaymentStatusByGatewayId(gatewayOrderId, "PAID");
+      if (updatedOrder && updatedOrder.email) {
+        try {
+          const productsList = await db.getProducts();
+          const productMap = Object.fromEntries(productsList.map((p) => [p.id, p]));
+          const invoiceHtml = generateInvoiceHTML(updatedOrder, productMap);
+          await sendEmail(
+            updatedOrder.email,
+            `Stack Shack Order Confirmation #${updatedOrder.invoiceNumber || updatedOrder.id.substring(0, 8)}`,
+            invoiceHtml
+          );
+        } catch (e) {
+          console.error("Failed to send order email after PhonePe verification:", e);
+        }
+      }
+      return { success: true, state: "COMPLETED", order: updatedOrder, providerRefId };
+    } else if (state === "PENDING") {
+      return { success: true, state: "PENDING", message: "Payment confirmation pending from PhonePe." };
+    } else {
+      await db.updateOrderPaymentStatusByGatewayId(gatewayOrderId, "FAILED");
+      return { success: false, state: state || "FAILED", message: statusResponse?.message || "Payment failed or cancelled." };
+    }
+  } catch (error: any) {
+    console.error("verifyPhonePeOrderStatusAction error:", error);
+    return { success: false, error: error.message || "Failed to verify PhonePe payment status" };
+  }
+}
+
+export async function adminRefreshOrderStatusAction(gatewayOrderId: string) {
+  try {
+    const settings = await db.getSettings();
+    const statusResponse = await checkPhonePeOrderStatus(gatewayOrderId, settings);
+    const state = statusResponse?.state || statusResponse?.data?.state || statusResponse?.code;
+
+    if (state === "COMPLETED" || state === "PAYMENT_SUCCESS") {
+      const order = await db.updateOrderPaymentStatusByGatewayId(gatewayOrderId, "PAID");
+      revalidatePath("/admin/orders");
+      return { success: true, status: "PAID", state, order };
+    } else if (state === "PENDING") {
+      return { success: true, status: "PENDING", state };
+    } else {
+      await db.updateOrderPaymentStatusByGatewayId(gatewayOrderId, "FAILED");
+      revalidatePath("/admin/orders");
+      return { success: true, status: "FAILED", state };
+    }
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
 
 export async function sendVerificationEmailAction(email: string) {
   try {

@@ -8,6 +8,7 @@ import { ArrowLeft, ShoppingBag, Heart, Star, Truck, ShieldCheck, RefreshCw, Loa
 import { formatINR } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import ProductCard from "@/components/ui/ProductCard";
+import ProductImageGallery from "@/components/ui/ProductImageGallery";
 import { getVariantsByProductAction } from "@/app/actions";
 import { ProductVariant } from "@/lib/mock-db";
 
@@ -190,19 +191,13 @@ export default function ProductDetailPage({ params }: PageProps) {
         {/* Details Layout Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-start">
 
-          {/* Left: Visual Jar Showcase */}
-          <div className="relative aspect-square w-full overflow-hidden rounded-[32px] bg-gray-50 border border-gray-100 shadow-xs">
-            {product.images && product.images.length > 0 && product.images[0] && !product.images[0].startsWith("data:") ? (
-              <img
-                src={product.images[0]}
-                alt={product.name}
-                width="600"
-                height="600"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              drawIcon(product.name)
-            )}
+          {/* Left: Visual Jar Showcase & Gallery */}
+          <div className="relative w-full">
+            <ProductImageGallery 
+              images={product.images || []} 
+              productName={product.name} 
+              fallbackNode={drawIcon(product.name)}
+            />
 
             {/* Badges */}
             <div className="absolute left-4 top-4 flex flex-col gap-1.5 z-10">

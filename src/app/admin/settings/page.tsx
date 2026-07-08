@@ -36,9 +36,18 @@ export default function AdminSettings() {
   const [shippingFee, setShippingFee] = useState("");
   const [taxRate, setTaxRate] = useState("");
   
+  // Payment Gateway
+  const [activePaymentGateway, setActivePaymentGateway] = useState("razorpay");
+
   // API credentials
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
+  const [razorpayEnvironment, setRazorpayEnvironment] = useState("test");
+  const [phonepeClientId, setPhonepeClientId] = useState("");
+  const [phonepeClientSecret, setPhonepeClientSecret] = useState("");
+  const [phonepeClientVersion, setPhonepeClientVersion] = useState("1");
+  const [phonepeEnvironment, setPhonepeEnvironment] = useState("sandbox");
+
   const [resendApiKey, setResendApiKey] = useState("");
   const [resendSenderEmail, setResendSenderEmail] = useState("");
   const [cloudinaryCloudName, setCloudinaryCloudName] = useState("");
@@ -48,12 +57,12 @@ export default function AdminSettings() {
   const [testEmail, setTestEmail] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        const data = await adminGetSettingsAction();
-        if (data) {
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const data = await adminGetSettingsAction();
+      console.log("Loaded settings from DB:", data);
+      if (data) {
           setSettings(data);
           setWebsiteName(data.websiteName || "");
           setStoreEmail(data.storeEmail || "");
@@ -64,8 +73,14 @@ export default function AdminSettings() {
           setShippingFreeLimit(data.shippingFreeLimit.toString());
           setShippingFee(data.shippingFee.toString());
           setTaxRate(data.taxRate.toString());
+          setActivePaymentGateway(data.activePaymentGateway || "razorpay");
           setRazorpayKeyId(data.razorpayKeyId || "");
           setRazorpayKeySecret(data.razorpayKeySecret || "");
+          setRazorpayEnvironment(data.razorpayEnvironment || "test");
+          setPhonepeClientId(data.phonepeClientId || "");
+          setPhonepeClientSecret(data.phonepeClientSecret || "");
+          setPhonepeClientVersion(data.phonepeClientVersion || "1");
+          setPhonepeEnvironment(data.phonepeEnvironment || "sandbox");
           setResendApiKey(data.resendApiKey || "");
           setResendSenderEmail(data.resendSenderEmail || "");
           setCloudinaryCloudName(data.cloudinaryCloudName || "");
@@ -78,7 +93,9 @@ export default function AdminSettings() {
       } finally {
         setLoading(false);
       }
-    }
+  };
+
+  useEffect(() => {
     loadData();
   }, []);
 
@@ -90,6 +107,13 @@ export default function AdminSettings() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (activePaymentGateway === "phonepe") {
+        if (!phonepeClientId || !phonepeClientSecret || !phonepeClientVersion) {
+          showToast("error", "PhonePe credentials are incomplete. Please configure Client ID, Client Secret and Client Version.");
+          return;
+        }
+      }
+
       setSaving(true);
       const payload = {
         websiteName,
@@ -101,18 +125,28 @@ export default function AdminSettings() {
         shippingFreeLimit: parseFloat(shippingFreeLimit),
         shippingFee: parseFloat(shippingFee),
         taxRate: parseFloat(taxRate),
+        activePaymentGateway,
         razorpayKeyId,
         razorpayKeySecret,
+        razorpayEnvironment,
+        phonepeClientId,
+        phonepeClientSecret,
+        phonepeClientVersion,
+        phonepeEnvironment,
         resendApiKey,
         resendSenderEmail,
         cloudinaryCloudName,
-        cloudinaryApiKey,
         cloudinaryApiSecret
       };
+      console.log("Value selected in UI for Gateway:", activePaymentGateway);
+      if (typeof phonepeClientSecret === "string") {
+        console.log(`[PhonePe Secret Debug] Frontend submitting phonepeClientSecret of length: ${phonepeClientSecret.length}`);
+      }
 
       const updated = await adminUpdateSettingsAction(payload);
       if (updated.success) {
         showToast("success", "Configurations successfully saved to store database.");
+        await loadData();
       } else {
         showToast("error", "Unable to persist store changes.");
       }
@@ -323,38 +357,89 @@ export default function AdminSettings() {
           </div>
         </div>
 
-        {/* Card: API Integration Credentials */}
+        {/* Card: Payment Gateway Settings */}
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-xs space-y-6">
           <div className="flex items-center gap-2.5 pb-4 border-b border-gray-50">
-            <Key className="h-5 w-5 text-[#4285F4]" />
-            <h2 className="text-sm font-black text-gray-800 uppercase tracking-wider">API Integration Keys</h2>
+            <DollarSign className="h-5 w-5 text-[#4285F4]" />
+            <h2 className="text-sm font-black text-gray-800 uppercase tracking-wider">Payment Gateway Settings</h2>
           </div>
 
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="rzpkey" className="text-xs font-bold text-gray-600">Razorpay Key ID</Label>
-                <Input 
-                  id="rzpkey"
-                  value={razorpayKeyId}
-                  onChange={(e) => setRazorpayKeyId(e.target.value)}
-                  placeholder="rzp_test_..."
-                  className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rzpsecret" className="text-xs font-bold text-gray-600">Razorpay Key Secret</Label>
-                <Input 
-                  id="rzpsecret"
-                  type="password"
-                  value={razorpayKeySecret}
-                  onChange={(e) => setRazorpayKeySecret(e.target.value)}
-                  placeholder="••••••••••••••••••••••••"
-                  className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]"
-                />
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <Label className="text-xs font-bold text-gray-600">Active Payment Gateway</Label>
+              <div className="flex gap-4">
+                <label className={`flex flex-1 items-center gap-2 p-3 border rounded-xl cursor-pointer transition-colors ${activePaymentGateway === "razorpay" ? "border-[#4285F4] bg-blue-50" : "border-gray-200 hover:bg-gray-50"}`}>
+                  <input type="radio" name="gateway" value="razorpay" checked={activePaymentGateway === "razorpay"} onChange={() => setActivePaymentGateway("razorpay")} className="text-[#4285F4]" />
+                  <span className="text-sm font-bold text-gray-800">Razorpay</span>
+                  {activePaymentGateway === "razorpay" && <span className="ml-auto text-[10px] bg-[#4285F4] text-white px-2 py-0.5 rounded-full font-bold">Currently Active</span>}
+                </label>
+                <label className={`flex flex-1 items-center gap-2 p-3 border rounded-xl cursor-pointer transition-colors ${activePaymentGateway === "phonepe" ? "border-[#4285F4] bg-blue-50" : "border-gray-200 hover:bg-gray-50"}`}>
+                  <input type="radio" name="gateway" value="phonepe" checked={activePaymentGateway === "phonepe"} onChange={() => setActivePaymentGateway("phonepe")} className="text-[#4285F4]" />
+                  <span className="text-sm font-bold text-gray-800">PhonePe</span>
+                  {activePaymentGateway === "phonepe" && <span className="ml-auto text-[10px] bg-[#4285F4] text-white px-2 py-0.5 rounded-full font-bold">Currently Active</span>}
+                </label>
               </div>
             </div>
 
+            <div className="pt-4 border-t border-gray-50 space-y-4">
+              <h3 className="text-xs font-bold text-gray-600 uppercase">Razorpay Configuration</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="rzpkey" className="text-xs font-bold text-gray-600">Razorpay Key ID</Label>
+                  <Input id="rzpkey" value={razorpayKeyId} onChange={(e) => setRazorpayKeyId(e.target.value)} placeholder="rzp_test_..." className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="rzpsecret" className="text-xs font-bold text-gray-600">Razorpay Key Secret</Label>
+                  <Input id="rzpsecret" type="password" value={razorpayKeySecret} onChange={(e) => setRazorpayKeySecret(e.target.value)} placeholder="••••••••••••••••••••••••" className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-gray-600">Environment Mode</Label>
+                  <select value={razorpayEnvironment} onChange={(e) => setRazorpayEnvironment(e.target.value)} className="w-full text-sm border border-gray-200 px-3.5 py-2.5 rounded-xl focus:border-[#4285F4] outline-none text-gray-700 bg-white">
+                    <option value="test">Test</option>
+                    <option value="live">Live</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-gray-50 space-y-4">
+              <h3 className="text-xs font-bold text-gray-600 uppercase">PhonePe Configuration (Payment Gateway V2)</h3>
+              <p className="text-xs text-gray-500">Client ID and Client Secret are provided in your PhonePe Business Developer Dashboard.</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="phonepe_client_id" className="text-xs font-bold text-gray-600">Client ID</Label>
+                  <Input id="phonepe_client_id" value={phonepeClientId} onChange={(e) => setPhonepeClientId(e.target.value)} placeholder="e.g. USER_CLIENT_ID" className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-gray-600">Environment Mode</Label>
+                  <select value={phonepeEnvironment} onChange={(e) => setPhonepeEnvironment(e.target.value)} className="w-full text-sm border border-gray-200 px-3.5 py-2.5 rounded-xl focus:border-[#4285F4] outline-none text-gray-700 bg-white">
+                    <option value="sandbox">Sandbox/UAT</option>
+                    <option value="production">Production</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="phonepe_client_secret" className="text-xs font-bold text-gray-600">Client Secret</Label>
+                  <Input id="phonepe_client_secret" type="password" value={phonepeClientSecret} onChange={(e) => setPhonepeClientSecret(e.target.value)} placeholder="••••••••••••••••••••••••" className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="phonepe_client_version" className="text-xs font-bold text-gray-600">Client Version</Label>
+                  <Input id="phonepe_client_version" value={phonepeClientVersion} onChange={(e) => setPhonepeClientVersion(e.target.value)} placeholder="e.g. 1" className="rounded-xl border-gray-200 focus-visible:ring-[#4285F4]" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card: Email & Media Integration Credentials */}
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-xs space-y-6">
+          <div className="flex items-center gap-2.5 pb-4 border-b border-gray-50">
+            <Key className="h-5 w-5 text-[#4285F4]" />
+            <h2 className="text-sm font-black text-gray-800 uppercase tracking-wider">Email & Media Integration Keys</h2>
+          </div>
+
+          <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="resendkey" className="text-xs font-bold text-gray-600">Resend Mail API Key</Label>

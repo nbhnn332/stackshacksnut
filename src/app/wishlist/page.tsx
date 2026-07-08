@@ -5,6 +5,7 @@ import { useStore } from "@/context/StoreContext";
 import { Heart, Trash2, ShoppingBag, ArrowRight, LogIn } from "lucide-react";
 import { formatINR } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import SafeImage from "@/components/ui/SafeImage";
 
 export default function WishlistPage() {
   const { wishlist, moveAllWishlistToCart, toggleWishlist, addToCart, user, loading } = useStore();
@@ -115,10 +116,12 @@ export default function WishlistPage() {
                   <div className="flex gap-4">
                     {/* Product Image */}
                     <div className="h-20 w-20 rounded-xl overflow-hidden bg-gray-50 shrink-0">
-                      <img
-                        src={p.images?.[0] || "/placeholder.png"}
+                      <SafeImage
+                        src={p.images?.[0]}
                         alt={p.name}
-                        className="h-full w-full object-cover"
+                        fill
+                        sizes="80px"
+                        className="object-cover"
                       />
                     </div>
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useStore } from "@/context/StoreContext";
 import { Heart, ShoppingBag, Star } from "lucide-react";
 import { useState } from "react";
+import SafeImage from "@/components/ui/SafeImage";
 import { formatINR } from "@/lib/utils";
 
 interface ProductCardProps {
@@ -114,11 +115,11 @@ export default function ProductCard({ product }: ProductCardProps) {
       {/* Product Image Area */}
       <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-gray-50 z-0">
         {hasImage ? (
-          <img
+          <SafeImage
             src={product.images[0]}
             alt={product.name}
-            width="400"
-            height="400"
+            fill
+            sizes="(max-width:768px) 100vw, 400px"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         ) : (

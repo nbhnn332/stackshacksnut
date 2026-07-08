@@ -152,10 +152,26 @@ export interface Settings {
   shippingFreeLimit: number;
   shippingFee: number;
   taxRate: number;
+  
+  // Payment Gateway Settings
+  activePaymentGateway?: string | null; // "razorpay" | "phonepe"
+  
+  // Razorpay
   razorpayKeyId?: string | null;
   razorpayKeySecret?: string | null;
+  razorpayEnvironment?: string | null; // "test" | "live"
+  
+  // PhonePe
+  phonepeClientId?: string | null;
+  phonepeClientSecret?: string | null;
+  phonepeClientVersion?: string | null;
+  phonepeEnvironment?: string | null; // "sandbox" | "production"
+  
+  // Resend
   resendApiKey?: string | null;
   resendSenderEmail?: string | null;
+  
+  // Cloudinary
   cloudinaryCloudName?: string | null;
   cloudinaryApiKey?: string | null;
   cloudinaryApiSecret?: string | null;

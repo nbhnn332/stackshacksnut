@@ -5,7 +5,8 @@ import {
   adminGetOrdersAction, 
   adminUpdateOrderStatusAction, 
   adminUpdateOrderTrackingAction,
-  getProductsAction
+  getProductsAction,
+  adminRefreshOrderStatusAction
 } from "@/app/actions";
 import { 
   Search, 
@@ -18,7 +19,8 @@ import {
   User,
   MapPin,
   Calendar,
-  DollarSign
+  DollarSign,
+  RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -26,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { formatINR, parseAddress, DetailedAddress } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { exportToCSV } from "@/lib/csv";
+import SafeImage from "@/components/ui/SafeImage";
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
@@ -130,6 +133,25 @@ export default function AdminOrders() {
       }
     } catch (e) {
       alert("Failed to update order status.");
+    }
+  };
+
+  const [refreshingOrderId, setRefreshingOrderId] = useState<string | null>(null);
+
+  const handleRefreshPaymentStatus = async (order: any) => {
+    if (!order.razorpayOrderId) return;
+    setRefreshingOrderId(order.id);
+    try {
+      const res = await adminRefreshOrderStatusAction(order.razorpayOrderId);
+      if (res.success && res.status) {
+        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, paymentStatus: res.status } : o));
+      } else {
+        alert(res.error || "Could not refresh status");
+      }
+    } catch (e) {
+      alert("Failed to refresh status");
+    } finally {
+      setRefreshingOrderId(null);
     }
   };
 
@@ -282,7 +304,7 @@ export default function AdminOrders() {
                           return (
                             <div key={i} className="flex items-center gap-2">
                               {imgUrl ? (
-                                <img src={imgUrl} alt={productName} className="w-8 h-8 object-contain rounded border border-gray-100 bg-white" />
+                                <SafeImage src={imgUrl} alt={productName} width={32} height={32} className="w-8 h-8 object-contain rounded border border-gray-100 bg-white" />
                               ) : (
                                 <div className="w-8 h-8 rounded bg-gray-50 flex items-center justify-center border border-gray-100">
                                   <ClipboardList className="w-3 h-3 text-gray-300" />
@@ -306,13 +328,35 @@ export default function AdminOrders() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                        o.paymentStatus === "PAID" 
-                          ? "bg-emerald-50 text-emerald-600" 
-                          : "bg-amber-50 text-amber-600"
-                      }`}>
-                        {o.paymentStatus}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          o.paymentStatus === "PAID" 
+                            ? "bg-emerald-50 text-emerald-600" 
+                            : "bg-amber-50 text-amber-600"
+                        }`}>
+                          {o.paymentStatus}
+                        </span>
+                        {o.razorpayOrderId && (
+                          <div className="text-[9px] text-gray-400 font-mono">
+                            PG ID: {o.razorpayOrderId}
+                          </div>
+                        )}
+                        {o.razorpayPaymentId && (
+                          <div className="text-[9px] text-gray-400 font-mono">
+                            TX ID: {o.razorpayPaymentId}
+                          </div>
+                        )}
+                        {o.razorpayOrderId && o.paymentStatus !== "PAID" && (
+                          <button
+                            onClick={() => handleRefreshPaymentStatus(o)}
+                            disabled={refreshingOrderId === o.id}
+                            className="inline-flex items-center gap-1 text-[9px] font-bold text-[#4285F4] hover:underline mt-0.5"
+                          >
+                            <RefreshCw className={`h-2.5 w-2.5 ${refreshingOrderId === o.id ? 'animate-spin' : ''}`} />
+                            <span>Verify Status</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <select
@@ -548,7 +592,7 @@ export default function AdminOrders() {
                             <tr key={i}>
                               <td className="px-4 py-3 flex items-center gap-3">
                                 {imgUrl ? (
-                                  <img src={imgUrl} alt={productName} className="w-10 h-10 object-contain rounded-md bg-white border border-gray-100" />
+                                  <SafeImage src={imgUrl} alt={productName} width={40} height={40} className="w-10 h-10 object-contain rounded-md bg-white border border-gray-100" />
                                 ) : (
                                   <div className="w-10 h-10 rounded-md bg-gray-100 flex items-center justify-center border border-gray-200">
                                     <ClipboardList className="w-4 h-4 text-gray-400" />

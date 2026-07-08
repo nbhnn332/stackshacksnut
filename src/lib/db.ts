@@ -169,8 +169,18 @@ function mapSettings(row: any): Settings {
     shippingFreeLimit: row.shipping_free_limit,
     shippingFee: row.shipping_fee,
     taxRate: row.tax_rate,
+    
+    activePaymentGateway: row.active_payment_gateway,
+    
     razorpayKeyId: row.razorpay_key_id,
     razorpayKeySecret: row.razorpay_key_secret,
+    razorpayEnvironment: row.razorpay_environment,
+    
+    phonepeClientId: row.phonepe_client_id,
+    phonepeClientSecret: row.phonepe_client_secret,
+    phonepeClientVersion: row.phonepe_client_version || "1",
+    phonepeEnvironment: row.phonepe_environment || "sandbox",
+    
     resendApiKey: row.resend_api_key,
     resendSenderEmail: row.resend_sender_email,
     cloudinaryCloudName: row.cloudinary_cloud_name,
@@ -823,6 +833,49 @@ export const db = {
     return data ? mapOrder(data) : null;
   },
 
+  async updateOrderPaymentStatusByGatewayId(gatewayOrderId: string, paymentStatus: string, transactionId?: string): Promise<Order | null> {
+    const { data: existingRows, error: findErr } = await supabase
+      .from("orders")
+      .select("id, payment_status")
+      .eq("razorpay_order_id", gatewayOrderId)
+      .limit(1);
+      
+    if (findErr || !existingRows || existingRows.length === 0) {
+      console.error("Failed to find order for gateway id:", gatewayOrderId);
+      return null;
+    }
+    
+    const existing = existingRows[0];
+    if (existing.payment_status === "PAID" && paymentStatus === "PAID") {
+      console.log("[Order Audit] Order already PAID, skipping duplicate processing for:", gatewayOrderId);
+      const { data } = await supabase
+        .from("orders")
+        .select("*, order_items(*)")
+        .eq("id", existing.id)
+        .single();
+      return data ? mapOrder(data) : null;
+    }
+    
+    const updatePayload: any = { payment_status: paymentStatus };
+    if (transactionId) {
+      updatePayload.razorpay_payment_id = transactionId;
+    }
+
+    const { error } = await supabase
+      .from("orders")
+      .update(updatePayload)
+      .eq("id", existing.id);
+      
+    if (error) { console.error("Supabase update error:", error); return null; }
+
+    const { data } = await supabase
+      .from("orders")
+      .select("*, order_items(*)")
+      .eq("id", existing.id)
+      .single();
+    return data ? mapOrder(data) : null;
+  },
+
   async updateOrderTracking(orderId: string, trackingNumber: string): Promise<Order | null> {
     const { error } = await supabase
       .from("orders")
@@ -1060,6 +1113,10 @@ export const db = {
         shippingFreeLimit: 50,
         shippingFee: 5.99,
         taxRate: 5,
+        activePaymentGateway: "razorpay",
+        razorpayEnvironment: "test",
+        phonepeClientVersion: "1",
+        phonepeEnvironment: "sandbox",
       };
     }
 
@@ -1077,17 +1134,34 @@ export const db = {
     if (data.shippingFreeLimit !== undefined) update.shipping_free_limit = data.shippingFreeLimit;
     if (data.shippingFee !== undefined) update.shipping_fee = data.shippingFee;
     if (data.taxRate !== undefined) update.tax_rate = data.taxRate;
+    
+    if (data.activePaymentGateway !== undefined) update.active_payment_gateway = data.activePaymentGateway;
+    
     if (data.razorpayKeyId !== undefined) update.razorpay_key_id = data.razorpayKeyId;
     if (data.razorpayKeySecret !== undefined) update.razorpay_key_secret = data.razorpayKeySecret;
+    if (data.razorpayEnvironment !== undefined) update.razorpay_environment = data.razorpayEnvironment;
+    
+    if (data.phonepeClientId !== undefined) update.phonepe_client_id = data.phonepeClientId;
+    if (data.phonepeClientSecret !== undefined) {
+      update.phonepe_client_secret = data.phonepeClientSecret;
+      console.log(`[PhonePe Secret Debug] db.updateSettings writing phonepe_client_secret of length: ${typeof data.phonepeClientSecret === "string" ? data.phonepeClientSecret.length : 0}`);
+    }
+    if (data.phonepeClientVersion !== undefined) update.phonepe_client_version = data.phonepeClientVersion;
+    if (data.phonepeEnvironment !== undefined) update.phonepe_environment = data.phonepeEnvironment;
+
     if (data.resendApiKey !== undefined) update.resend_api_key = data.resendApiKey;
     if (data.resendSenderEmail !== undefined) update.resend_sender_email = data.resendSenderEmail;
     if (data.cloudinaryCloudName !== undefined) update.cloudinary_cloud_name = data.cloudinaryCloudName;
     if (data.cloudinaryApiKey !== undefined) update.cloudinary_api_key = data.cloudinaryApiKey;
     if (data.cloudinaryApiSecret !== undefined) update.cloudinary_api_secret = data.cloudinaryApiSecret;
 
-    const { data: row, error } = await supabase.from("settings").update(update).eq("id", "global-settings").select();
+    const { data: row, error } = await supabase.from("settings").update(update).eq("id", "global-settings").select().single();
 
     if (error) { console.error("Supabase updateSettings error:", error); return this.getSettings(); }
+    if (row && typeof row.phonepe_client_secret === "string") {
+      console.log(`[PhonePe Secret Debug] db.updateSettings database returned phonepe_client_secret of length: ${row.phonepe_client_secret.length}`);
+    }
+    console.log("Settings successfully saved in database for id:", row?.id);
     // Invalidate cache after update
     clearCache('settings');
     return mapSettings(row);

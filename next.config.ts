@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "**.cloudinary.com" },
       { protocol: "https", hostname: "picsum.photos" },
       { protocol: "https", hostname: "via.placeholder.com" },
+      { protocol: "https", hostname: "i.postimg.cc" },
+      { protocol: "https", hostname: "**.supabase.co" },
+      { protocol: "https", hostname: "cdn2.nutrabay.com" },
     ],
   },
 };

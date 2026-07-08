@@ -86,14 +86,25 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <span className="cursor-pointer hover:text-[#4285F4] transition-colors">
-                  Shipping & Returns
-                </span>
+                <a
+                  href="https://terms.stackshacknutrition.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cursor-pointer hover:text-[#4285F4] transition-colors"
+                >
+                  Terms of Service
+                </a>
               </li>
+
               <li>
-                <span className="cursor-pointer hover:text-[#4285F4] transition-colors">
-                  FAQ
-                </span>
+                <a
+                  href="https://policy.stackshacknutrition.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cursor-pointer hover:text-[#4285F4] transition-colors"
+                >
+                  Privacy Policy
+                </a>
               </li>
             </ul>
           </div>
@@ -124,8 +135,23 @@ export default function Footer() {
         <div className="flex flex-col sm:flex-row items-center justify-between pt-8 text-xs text-gray-400">
           <span>&copy; {currentYear} Stack Shack Nutrition. All rights reserved.</span>
           <div className="flex space-x-4 mt-4 sm:mt-0">
-            <span className="hover:underline cursor-pointer">Privacy Policy</span>
-            <span className="hover:underline cursor-pointer">Terms of Service</span>
+
+
+            <Link
+              href="https://policy.stackshacknutrition.com"
+              target="_blank"
+              className="hover:underline cursor-pointer"
+            >
+              Privacy Policy
+            </Link>
+
+            <Link
+              href="https://terms.stackshacknutrition.com"
+              target="_blank"
+              className="hover:underline cursor-pointer"
+            >
+              Terms of Service
+            </Link>
           </div>
         </div>
       </div>
